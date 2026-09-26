@@ -35,6 +35,11 @@ export async function logSession(sessionType: SessionType, durationMinutes: numb
   if (error) throw error;
 }
 
+export async function deleteAllSessions(): Promise<void> {
+  const { error } = await supabase.from(TABLE).delete().not('id', 'is', null);
+  if (error) throw error;
+}
+
 export function isToday(iso: string): boolean {
   const d = new Date(iso);
   const now = new Date();
