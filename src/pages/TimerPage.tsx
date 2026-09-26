@@ -1,60 +1,56 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useAppData } from '@/lib/data';
 import { Card, CardContent } from '@/lib/ui/Card';
-import { Badge } from '@/lib/ui/Badge';
 import { Button } from '@/lib/ui/Button';
-import { CenteredSpinner } from '@/lib/ui/Spinner';
+import { Badge } from '@/lib/ui/Badge';
 import { Alert, AlertTitle, AlertDescription } from '@/lib/ui/Alert';
 import { Play, Pause, RotateCcw } from 'lucide-react';
-import { cn } from '@/lib/cn';
-import { SESSIONS_KEY, mockSessions, type PomodoroSession } from '@/lib/sessions';
 import { StatsCard } from '@/components/StatsCard';
+import { logSession, SESSIONS_KEY, SessionType } from '@/lib/sessions';
 
 const FOCUS_SECONDS = 25 * 60;
 const BREAK_SECONDS = 5 * 60;
 
 function formatTime(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-  const s = Math.floor(totalSeconds % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 export default function TimerPage() {
-  const qc = useQueryClient();
-  const { data: sessions, isLoading, error, refetch } = useAppData<PomodoroSession[]>({
-    key: SESSIONS_KEY,
-    mock: mockSessions,
-    fetchLive: async () => {
-      throw new Error('not wired yet');
-    },
-  });
-
-  const [sessionType, setSessionType] = useState<'focus' | 'break'>('focus');
+  const [sessionType, setSessionType] = useState<SessionType>('focus');
   const [secondsLeft, setSecondsLeft] = useState(FOCUS_SECONDS);
-  const [isRunning, setIsRunning] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const intervalRef = useRef<number | null>(null);
+  const qc = useQueryClient();
 
-  function completeSession(justFinishedType: 'focus' | 'break') {
-    const completed: PomodoroSession = {
-      id: crypto.randomUUID(),
-      session_type: justFinishedType,
-      duration_minutes: justFinishedType === 'focus' ? 25 : 5,
-      completed_at: new Date().toISOString(),
-    };
-    qc.setQueryData<PomodoroSession[]>(SESSIONS_KEY, (old) => [completed, ...(old ?? [])]);
-    const next = justFinishedType === 'focus' ? 'break' : 'focus';
-    setSessionType(next);
-    setSecondsLeft(next === 'focus' ? FOCUS_SECONDS : BREAK_SECONDS);
-  }
+  const totalForType = sessionType === 'focus' ? FOCUS_SECONDS : BREAK_SECONDS;
+
+  const handleComplete = useCallback(async () => {
+    setRunning(false);
+    const completedType = sessionType;
+    const completedDuration = completedType === 'focus' ? 25 : 5;
+    try {
+      setSaveError(null);
+      await logSession(completedType, completedDuration);
+      qc.invalidateQueries({ queryKey: SESSIONS_KEY });
+    } catch (e) {
+      setSaveError((e as Error).message);
+    }
+    const nextType: SessionType = completedType === 'focus' ? 'break' : 'focus';
+    setSessionType(nextType);
+    setSecondsLeft(nextType === 'focus' ? FOCUS_SECONDS : BREAK_SECONDS);
+  }, [sessionType, qc]);
 
   useEffect(() => {
-    if (!isRunning) return;
+    if (!running) return;
     intervalRef.current = window.setInterval(() => {
       setSecondsLeft((prev) => {
         if (prev <= 1) {
-          completeSession(sessionType);
-          return prev;
+          window.clearInterval(intervalRef.current ?? undefined);
+          void handleComplete();
+          return 0;
         }
         return prev - 1;
       });
@@ -62,91 +58,71 @@ export default function TimerPage() {
     return () => {
       if (intervalRef.current) window.clearInterval(intervalRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning, sessionType]);
+  }, [running, handleComplete]);
 
-  function handleStart() {
-    setIsRunning(true);
-  }
-  function handlePause() {
-    setIsRunning(false);
-  }
-  function handleReset() {
-    setIsRunning(false);
-    setSecondsLeft(sessionType === 'focus' ? FOCUS_SECONDS : BREAK_SECONDS);
-  }
+  const start = () => setRunning(true);
+  const pause = () => setRunning(false);
+  const reset = () => {
+    setRunning(false);
+    setSecondsLeft(totalForType);
+  };
 
-  const total = sessionType === 'focus' ? FOCUS_SECONDS : BREAK_SECONDS;
-  const progressPct = Math.min(100, Math.round(((total - secondsLeft) / total) * 100));
+  const progress = 1 - secondsLeft / totalForType;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-h1 text-foreground">Focus timer</h1>
-        <p className="text-body text-muted-foreground">
-          25 minutes of focus, 5 minutes to breathe. Your progress is saved automatically.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
-        <div className="md:col-span-8">
-          <Card className="animate-in">
-            <CardContent className="flex flex-col items-center gap-8 py-16">
-              <Badge variant={sessionType === 'focus' ? 'default' : 'outline'}>
-                {sessionType === 'focus' ? 'Focus' : 'Break'}
-              </Badge>
-              <div className="text-display font-bold tabular-nums tracking-tight text-foreground">
-                {formatTime(secondsLeft)}
-              </div>
-              <div className="h-1.5 w-full max-w-sm overflow-hidden rounded-full bg-muted">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all duration-500 ease-out',
-                    sessionType === 'focus' ? 'bg-primary' : 'bg-accent'
-                  )}
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <Button onClick={handleStart} disabled={isRunning}>
+    <div className="grid grid-cols-1 gap-6 md:grid-cols-12">
+      <div className="md:col-span-8">
+        <Card className="animate-in">
+          <CardContent className="flex flex-col items-center gap-8 py-16">
+            <Badge variant={sessionType === 'focus' ? 'default' : 'outline'}>
+              {sessionType === 'focus' ? 'Focus' : 'Break'}
+            </Badge>
+            <div
+              className={
+                'text-display tabular-nums transition-colors duration-150 ease-out ' +
+                (sessionType === 'focus' ? 'text-foreground' : 'text-accent')
+              }
+            >
+              {formatTime(secondsLeft)}
+            </div>
+            <div className="h-1 w-full max-w-sm overflow-hidden rounded-full bg-muted">
+              <div
+                className={
+                  'h-full rounded-full transition-all duration-300 ease-out ' +
+                  (sessionType === 'focus' ? 'bg-primary' : 'bg-accent')
+                }
+                style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              {!running ? (
+                <Button onClick={start}>
                   <Play size={16} />
                   Start
                 </Button>
-                <Button variant="secondary" onClick={handlePause} disabled={!isRunning}>
+              ) : (
+                <Button onClick={pause} variant="secondary">
                   <Pause size={16} />
                   Pause
                 </Button>
-                <Button variant="ghost" onClick={handleReset}>
-                  <RotateCcw size={16} />
-                  Reset
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-        <aside className="md:col-span-4">
-          {isLoading ? (
-            <Card>
-              <CardContent className="py-12">
-                <CenteredSpinner label="Loading stats" />
-              </CardContent>
-            </Card>
-          ) : error ? (
-            <Alert variant="destructive">
-              <AlertTitle>Couldn't load stats</AlertTitle>
-              <AlertDescription>
-                {(error as Error).message}
-                <div className="mt-3">
-                  <Button size="sm" variant="outline" onClick={() => refetch()}>
-                    Retry
-                  </Button>
-                </div>
-              </AlertDescription>
-            </Alert>
-          ) : (
-            <StatsCard sessions={sessions ?? []} />
-          )}
-        </aside>
+              )}
+              <Button onClick={reset} variant="ghost">
+                <RotateCcw size={16} />
+                Reset
+              </Button>
+            </div>
+            {saveError && (
+              <Alert variant="destructive" className="max-w-sm">
+                <AlertTitle>Couldn't save session</AlertTitle>
+                <AlertDescription>{saveError}</AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
       </div>
+      <aside className="md:col-span-4">
+        <StatsCard />
+      </aside>
     </div>
   );
 }

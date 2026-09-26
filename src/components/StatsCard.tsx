@@ -1,51 +1,49 @@
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/lib/ui/Card';
-import { Flame, ListChecks, Coffee } from 'lucide-react';
-import type { PomodoroSession } from '@/lib/sessions';
+import { useQuery } from '@tanstack/react-query';
+import { Card, CardHeader, CardTitle, CardContent } from '@/lib/ui/Card';
+import { Spinner } from '@/lib/ui/Spinner';
+import { Alert, AlertTitle, AlertDescription } from '@/lib/ui/Alert';
+import { fetchSessions, isToday, SESSIONS_KEY } from '@/lib/sessions';
 
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
+export function StatsCard() {
+  const { data, isLoading, error } = useQuery({
+    queryKey: SESSIONS_KEY,
+    queryFn: fetchSessions,
+  });
 
-export function StatsCard({ sessions }: { sessions: PomodoroSession[] }) {
-  const today = new Date();
-  const todaysFocus = sessions.filter(
-    (s) => s.session_type === 'focus' && isSameDay(new Date(s.completed_at), today)
-  ).length;
-  const todaysBreaks = sessions.filter(
-    (s) => s.session_type === 'break' && isSameDay(new Date(s.completed_at), today)
-  ).length;
-  const totalFocus = sessions.filter((s) => s.session_type === 'focus').length;
+  const todaysFocus = data?.filter((s) => s.session_type === 'focus' && isToday(s.completed_at)).length ?? 0;
+  const totalFocus = data?.filter((s) => s.session_type === 'focus').length ?? 0;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Your progress</CardTitle>
-        <CardDescription>Synced across devices</CardDescription>
+        <CardTitle>Sessions</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-2 text-small text-muted-foreground">
-            <Flame size={14} /> Today's focus sessions
-          </span>
-          <span className="text-h2 tabular-nums text-foreground">{todaysFocus}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-2 text-small text-muted-foreground">
-            <Coffee size={14} /> Today's breaks
-          </span>
-          <span className="text-body tabular-nums text-foreground">{todaysBreaks}</span>
-        </div>
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <span className="inline-flex items-center gap-2 text-small text-muted-foreground">
-            <ListChecks size={14} /> All-time focus sessions
-          </span>
-          <span className="text-body tabular-nums text-foreground">{totalFocus}</span>
-        </div>
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-small">
+            <Spinner size={16} /> Loading stats
+          </div>
+        ) : error ? (
+          <Alert variant="destructive">
+            <AlertTitle>Couldn't load stats</AlertTitle>
+            <AlertDescription>{(error as Error).message}</AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            <Row label="Today's focus sessions" value={todaysFocus} />
+            <Row label="All-time focus sessions" value={totalFocus} />
+          </>
+        )}
       </CardContent>
     </Card>
+  );
+}
+
+function Row({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-small text-muted-foreground">{label}</span>
+      <span className="text-h3 tabular-nums text-foreground">{value}</span>
+    </div>
   );
 }
